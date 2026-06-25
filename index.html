@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Executable Business Plan: $25K/Month Solo AI Analytics Service (2026 Edition)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root { --navy: #0B2240; --navy-light: #1a365d; }
+        body { font-family: 'Inter', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        h1, h2, h3 { color: var(--navy); }
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white !important; }
+            .lg\:ml-72 { margin-left: 0 !important; }
+            main > div { box-shadow: none !important; border: none !important; }
+            aside { display: none !important; }
+            section { page-break-inside: avoid; }
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+    <div class="flex">
+        <!-- TOC Sidebar -->
+        <aside class="no-print hidden lg:block w-72 fixed h-screen overflow-y-auto bg-white border-r border-slate-200">
+            <div class="p-6">
+                <div class="mb-8">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">2026 Edition</h2>
+                    <p class="text-sm font-medium text-slate-900">Solo AI Analytics</p>
+                </div>
+                <nav class="space-y-1 text-[13px]">
+                    <a href="#executive-summary" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 font-medium text-slate-700">1. Executive Summary</a>
+                    <a href="#market" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">2. Market Research</a>
+                    <a href="#problem" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">3. Problem & Value Prop</a>
+                    <a href="#service" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">4. Service Model</a>
+                    <a href="#competitive" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">5. Competitive Landscape</a>
+                    <a href="#architecture" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">6. Technical Architecture</a>
+                    <a href="#tech-stack" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">7. Tech Stack Build</a>
+                    <a href="#playbook" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">8. 90-Day Playbook</a>
+                    <a href="#operations" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">9. Operations Workflow</a>
+                    <a href="#pricing" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">10. Unit Economics</a>
+                    <a href="#financials" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">11. Financial Projections</a>
+                    <a href="#marketing" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">12. Marketing & Acquisition</a>
+                    <a href="#risks" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">13. Risks & Mitigations</a>
+                    <a href="#checklist" class="block py-1.5 px-2 -mx-2 rounded hover:bg-slate-100 text-slate-600">14. Decision Checklist</a>
+                </nav>
+                <div class="mt-8 pt-6 border-t border-slate-200">
+                    <p class="text-[11px] text-slate-500">Exchange Rate: 1 USD = ₱56<br>BSP Average March 2026</p>
+                    <button onclick="window.print()" class="mt-4 w-full text-xs bg-[#0B2240] text-white py-2 px-3 rounded hover:bg-[#1a365d]">Print / Save PDF</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="w-full lg:ml-72">
+            <div class="max-w-4xl mx-auto bg-white min-h-screen shadow-sm">
+                <!-- Header -->
+                <header class="border-b border-slate-200 px-8 lg:px-12 py-10">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="inline-flex items-center gap-2 mb-4">
+                                <span class="px-2.5 py-1 bg-slate-900 text-white text-[10px] font-semibold tracking-widest uppercase rounded">2026 EDITION</span>
+                                <span class="text-xs text-slate-500">Whitepaper v1.3</span>
+                            </div>
+                            <h1 class="text-3xl lg:text-4xl font-bold tracking-tight leading-tight text-[#0B2240]">Executable Business Plan: $25K/Month Solo AI Analytics Service</h1>
+                            <p class="mt-3 text-lg text-slate-600 max-w-2xl">A productized, AI-augmented analytics consultancy for Philippines and global SMBs. Built for one operator.</p>
+                        </div>
+                    </div>
+                    <div class="mt-8 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm border-t border-slate-100 pt-6">
+                        <div><div class="text-slate-500">Target MRR</div><div class="font-semibold mono">$25,000 / ₱1.4M</div></div>
+                        <div><div class="text-slate-500">Timeline</div><div class="font-semibold mono">0-9 Months</div></div>
+                        <div><div class="text-slate-500">Clients Needed</div><div class="font-semibold mono">4-6 Retainers</div></div>
+                        <div><div class="text-slate-500">Startup Capital</div><div class="font-semibold mono">$1,500 / ₱84K</div></div>
+                    </div>
+                </header>
+
+                <div class="px-8 lg:px-12 py-10 space-y-16">
+                    <!-- 1. Executive Summary -->
+                    <section id="executive-summary" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">01</span> Executive Summary</h2>
+                        <div class="prose prose-slate max-w-none leading-relaxed">
+                            <p class="text-lg text-slate-700">SMBs don't need another dashboard. They need decisions. This plan outlines a solo-operated, productized AI Analytics service that delivers a weekly "Monday Memo" with 3 actionable decisions, not charts.</p>
+                            <div class="not-prose my-6 p-5 bg-slate-900 text-slate-100 rounded-lg">
+                                <p class="font-semibold mb-2 text-white">Thesis:</p>
+                                <p class="text-sm text-slate-300">By combining modern ELT (n8n + Airbyte + BigQuery) with an AI analysis layer (GPT-4o, Claude 3.5, LangChain), one operator in the Philippines can deliver the output of a 3-person US analytics team at 1/5th the price, with 80%+ gross margins.</p>
+                            </div>
+                            <ul class="space-y-2">
+                                <li><strong>Who:</strong> Philippines e-commerce (Shopify, Lazada, Shopee, TikTok Shop) and US/AU/NZ SMBs ($1M-$20M revenue) with messy data.</li>
+                                <li><strong>What:</strong> Three fixed-price tiers ($2,500 / $4,500 / $7,500) delivering insights, forecasting, and AI agents.</li>
+                                <li><strong>How:</strong> Productized delivery via Slack + Loom + Notion. 90% automated data pipeline, 10% expert review.</li>
+                                <li><strong>Goal:</strong> Reach $25,000 MRR by Month 9 with 5 clients (mix of Growth + Scale tiers).</li>
+                            </ul>
+                        </div>
+                    </section>
+
+                    <!-- 2. Market Research -->
+                    <section id="market" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">02</span> Market Research (Philippines Focus)</h2>
+                        <div class="grid md:grid-cols-3 gap-4 mb-6">
+                            <div class="border border-slate-200 rounded-lg p-4">
+                                <div class="text-3xl font-bold mono text-[#0B2240]">9,954</div>
+                                <div class="text-sm text-slate-600 mt-1">Active Shopify stores in PH as of March 2026</div>
+                                <div class="text-xs text-emerald-600 mt-2 font-medium">+12% YoY growth</div>
+                            </div>
+                            <div class="border border-slate-200 rounded-lg p-4">
+                                <div class="text-3xl font-bold mono text-[#0B2240]">6,102</div>
+                                <div class="text-sm text-slate-600 mt-1">Stores in Metro Manila (61.3%)</div>
+                                <div class="text-xs text-slate-500 mt-2">Highest concentration</div>
+                            </div>
+                            <div class="border border-slate-200 rounded-lg p-4">
+                                <div class="text-3xl font-bold mono text-[#0B2240]">1.2M</div>
+                                <div class="text-sm text-slate-600 mt-1">DTI-registered MSMEs</div>
+                                <div class="text-xs text-slate-500 mt-2">99.5% of PH businesses</div>
+                            </div>
+                        </div>
+                        <div class="prose prose-slate max-w-none">
+                            <p><strong>Opportunity Gap:</strong> Philippine e-commerce GMV exceeded ₱1.2 Trillion in 2025, yet 73% of merchants report using 4+ disconnected platforms (Shopify, Lazada, Shopee, TikTok Shop, GCash, Maya). Data lives in silos. Local agencies sell ads or dev, not analytics.</p>
+                            <p><strong>Global SMB Angle:</strong> US/AU SMBs are firing $8k/month junior analysts who just build dashboards. They want the "fractional CAO (Chief Analytics Officer)" for $2.5-7.5k who uses AI to be 10x faster. Timezone arbitrage (PH operator delivering overnight for US clients) is a feature, not a bug.</p>
+                        </div>
+                    </section>
+
+                    <!-- 3. Problem -->
+                    <section id="problem" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">03</span> Problem & Value Proposition</h2>
+                        <div class="grid md:grid-cols-2 gap-8">
+                            <div>
+                                <h3 class="font-semibold text-red-700 mb-3">The Problem</h3>
+                                <ul class="space-y-3 text-sm">
+                                    <li class="flex gap-3"><span class="text-red-500">×</span><span><strong>Insights, not dashboards:</strong> Founders spend 5 hours/week looking at GA4, Shopify, Meta Ads and still ask "so what do I do?"</span></li>
+                                    <li class="flex gap-3"><span class="text-red-500">×</span><span><strong>AI misuse:</strong> Businesses dump CSVs into ChatGPT and get hallucinations. No data pipeline, no context, no governance.</span></li>
+                                    <li class="flex gap-3"><span class="text-red-500">×</span><span><strong>Hiring doesn't work:</strong> Good analysts cost ₱80-120k/month in PH, $90k+/yr in US. They quit, need management, and don't understand business.</span></li>
+                                </ul>
+                            </div>
+                            <div>
+                                <h3 class="font-semibold text-emerald-700 mb-3">Value Proposition</h3>
+                                <ul class="space-y-3 text-sm">
+                                    <li class="flex gap-3"><span class="text-emerald-600">✓</span><span><strong>The Monday Memo:</strong> Every Monday 8am, 3 decisions in plain English. "Pause Ad Set B, reallocate $450 to C. Expected +₱67k this week."</span></li>
+                                    <li class="flex gap-3"><span class="text-emerald-600">✓</span><span><strong>AI Brain, Human Filter:</strong> We build your private data warehouse, then deploy AI agents trained on your business to analyze 24/7.</span></li>
+                                    <li class="flex gap-3"><span class="text-emerald-600">✓</span><span><strong>Fixed price, no drama:</strong> Productized tiers. No hourly billing. 48-hour onboarding.</span></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- 4. Service Model -->
+                    <section id="service" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">04</span> Service Model - Productized Tiers</h2>
+                        <div class="overflow-x-auto">
+                        <table class="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                            <thead class="bg-slate-900 text-white">
+                                <tr>
+                                    <th class="text-left p-3 font-semibold">Tier</th>
+                                    <th class="text-left p-3 font-semibold">Price USD / PHP</th>
+                                    <th class="text-left p-3 font-semibold">Ideal For</th>
+                                    <th class="text-left p-3 font-semibold">Deliverables</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-200">
+                                <tr>
+                                    <td class="p-3 font-semibold align-top">STARTER</td>
+                                    <td class="p-3 align-top mono">$2,500<br><span class="text-slate-500">₱140,000</span></td>
+                                    <td class="p-3 align-top">PH Shopify store doing ₱1-5M/mo</td>
+                                    <td class="p-3 align-top">1 data source (Shopify), Weekly Monday Memo, KPI dashboard, Slack support, Basic inventory alerts</td>
+                                </tr>
+                                <tr class="bg-slate-50">
+                                    <td class="p-3 font-semibold align-top">GROWTH <span class="ml-2 text-[10px] bg-[#0B2240] text-white px-1.5 py-0.5 rounded">POPULAR</span></td>
+                                    <td class="p-3 align-top mono">$4,500<br><span class="text-slate-500">₱252,000</span></td>
+                                    <td class="p-3 align-top">Multi-channel brand $50k-300k/mo</td>
+                                    <td class="p-3 align-top">3 sources (Shopify + Ads + GA4), AI forecasting, Competitor price tracking, Loom video walkthrough, Monthly strategy call</td>
+                                </tr>
+                                <tr>
+                                    <td class="p-3 font-semibold align-top">SCALE</td>
+                                    <td class="p-3 align-top mono">$7,500<br><span class="text-slate-500">₱420,000</span></td>
+                                    <td class="p-3 align-top">$300k+/mo or funded</td>
+                                    <td class="p-3 align-top">Unlimited sources, Custom AI agent trained on SOPs, Daily anomaly alerts, CFO-ready board reports, Dedicated Slack channel</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-3">All contracts: 3-month minimum, billed monthly via Wise USD or Maya PHP. Setup fee: 50% of first month (waived for first 3 clients).</p>
+                    </section>
+
+                    <!-- 5. Competitive -->
+                    <section id="competitive" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">05</span> Competitive Landscape</h2>
+                        <div class="overflow-x-auto">
+                        <table class="w-full text-[13px] border border-slate-200">
+                            <thead class="bg-slate-100">
+                                <tr>
+                                    <th class="p-2.5 text-left font-semibold">Option</th>
+                                    <th class="p-2.5 text-left font-semibold">Monthly Cost</th>
+                                    <th class="p-2.5 text-left font-semibold">Time to Value</th>
+                                    <th class="p-2.5 text-left font-semibold">Quality</th>
+                                    <th class="p-2.5 text-left font-semibold">Limitation</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y">
+                                <tr><td class="p-2.5 font-medium">Hire Local Analyst (PH)</td><td class="p-2.5 mono">₱50k-80k ($893-$1,429)</td><td class="p-2.5">4-8 weeks</td><td class="p-2.5">Variable</td><td class="p-2.5">Needs training, management, tools</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-medium">US Boutique Agency</td><td class="p-2.5 mono">$20k-$36k ($250-450/hr)</td><td class="p-2.5">2-3 weeks</td><td class="p-2.5">High</td><td class="p-2.5">Unaffordable for SMB</td></tr>
+                                <tr><td class="p-2.5 font-medium">Big 4 Consulting</td><td class="p-2.5 mono">$28k-$40k ($350-500/hr)</td><td class="p-2.5">6-12 weeks</td><td class="p-2.5">Enterprise</td><td class="p-2.5">Minimum $100k project</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-medium">Independent Expert (Upwork)</td><td class="p-2.5 mono">$12k-$28k ($150-350/hr)</td><td class="p-2.5">1-2 weeks</td><td class="p-2.5">Inconsistent</td><td class="p-2.5">Hourly, scope creep</td></tr>
+                                <tr class="bg-emerald-50"><td class="p-2.5 font-bold text-emerald-900">Solo AI Service (You)</td><td class="p-2.5 mono font-bold">$2,500-$7,500</td><td class="p-2.5 font-medium">48 hours</td><td class="p-2.5">AI-Augmented</td><td class="p-2.5">Capacity capped at 6-8 clients</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </section>
+
+                    <!-- 6. Architecture -->
+                    <section id="architecture" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">06</span> Technical Architecture</h2>
+                        <p class="text-sm text-slate-600 mb-4">Four-layer modern data stack designed for solo operation. Zero servers to manage.</p>
+                        
+                        <div class="border border-slate-200 rounded-lg p-6 bg-slate-50">
+                            <svg viewBox="0 0 800 220" class="w-full h-auto">
+                                <!-- Layer 1 -->
+                                <rect x="20" y="20" width="170" height="180" rx="8" fill="#0B2240" opacity="0.95"/>
+                                <text x="105" y="45" text-anchor="middle" fill="white" font-size="12" font-weight="600">LAYER 1: INGESTION</text>
+                                <text x="105" y="75" text-anchor="middle" fill="#cbd5e1" font-size="11">n8n</text>
+                                <text x="105" y="95" text-anchor="middle" fill="#cbd5e1" font-size="11">Airbyte Cloud</text>
+                                <text x="105" y="115" text-anchor="middle" fill="#cbd5e1" font-size="11">Fivetran (alt)</text>
+                                <text x="105" y="145" text-anchor="middle" fill="#94a3b8" font-size="10">Shopify, Meta, GA4,</text>
+                                <text x="105" y="162" text-anchor="middle" fill="#94a3b8" font-size="10">Shopee, TikTok, GCash</text>
+                                <text x="105" y="185" text-anchor="middle" fill="white" font-size="10" font-family="JetBrains Mono">$24-124/mo</text>
+
+                                <!-- Arrow 1 -->
+                                <path d="M195 110 H 240" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+                                
+                                <!-- Layer 2 -->
+                                <rect x="245" y="20" width="170" height="180" rx="8" fill="#1e3a8a" opacity="0.95"/>
+                                <text x="330" y="45" text-anchor="middle" fill="white" font-size="12" font-weight="600">LAYER 2: WAREHOUSE</text>
+                                <text x="330" y="75" text-anchor="middle" fill="#cbd5e1" font-size="11">Google BigQuery</text>
+                                <text x="330" y="95" text-anchor="middle" fill="#cbd5e1" font-size="11">dbt Cloud</text>
+                                <text x="330" y="115" text-anchor="middle" fill="#cbd5e1" font-size="11">Serverless</text>
+                                <text x="330" y="145" text-anchor="middle" fill="#94a3b8" font-size="10">Pay per query</text>
+                                <text x="330" y="162" text-anchor="middle" fill="#94a3b8" font-size="10">~$5/TB scanned</text>
+                                <text x="330" y="185" text-anchor="middle" fill="white" font-size="10" font-family="JetBrains Mono">$20-50/mo</text>
+
+                                <!-- Arrow 2 -->
+                                <path d="M420 110 H 465" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+                                <!-- Layer 3 -->
+                                <rect x="470" y="20" width="170" height="180" rx="8" fill="#0f172a" opacity="0.95"/>
+                                <text x="555" y="45" text-anchor="middle" fill="white" font-size="12" font-weight="600">LAYER 3: AI BRAIN</text>
+                                <text x="555" y="72" text-anchor="middle" fill="#cbd5e1" font-size="11">GPT-4o</text>
+                                <text x="555" y="90" text-anchor="middle" fill="#cbd5e1" font-size="11">Claude 3.5 Sonnet</text>
+                                <text x="555" y="108" text-anchor="middle" fill="#cbd5e1" font-size="11">LangChain</text>
+                                <text x="555" y="126" text-anchor="middle" fill="#cbd5e1" font-size="11">LlamaIndex (RAG)</text>
+                                <text x="555" y="150" text-anchor="middle" fill="#94a3b8" font-size="10">Agents, Forecasting,</text>
+                                <text x="555" y="167" text-anchor="middle" fill="#94a3b8" font-size="10">Anomaly Detection</text>
+                                <text x="555" y="185" text-anchor="middle" fill="white" font-size="10" font-family="JetBrains Mono">$90-250/mo</text>
+
+                                <!-- Arrow 3 -->
+                                <path d="M645 110 H 690" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+                                <!-- Layer 4 -->
+                                <rect x="695" y="20" width="85" height="180" rx="8" fill="#334155" opacity="0.95"/>
+                                <text x="737" y="45" text-anchor="middle" fill="white" font-size="11" font-weight="600">LAYER 4</text>
+                                <text x="737" y="62" text-anchor="middle" fill="white" font-size="11" font-weight="600">DELIVERY</text>
+                                <text x="737" y="88" text-anchor="middle" fill="#cbd5e1" font-size="10">Slack</text>
+                                <text x="737" y="106" text-anchor="middle" fill="#cbd5e1" font-size="10">Loom</text>
+                                <text x="737" y="124" text-anchor="middle" fill="#cbd5e1" font-size="10">Notion</text>
+                                <text x="737" y="142" text-anchor="middle" fill="#cbd5e1" font-size="10">Looker</text>
+                                <text x="737" y="165" text-anchor="middle" fill="white" font-size="10" font-family="JetBrains Mono">$34/mo</text>
+
+                                <defs>
+                                    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                                        <polygon points="0 0, 6 3, 0 6" fill="#64748b"/>
+                                    </marker>
+                                </defs>
+                            </svg>
+                        </div>
+                    </section>
+
+                    <!-- 7. Tech Stack -->
+                    <section id="tech-stack" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">07</span> Tech Stack Build Guide</h2>
+                        
+                        <div class="mb-6">
+                            <h3 class="font-semibold mb-3 text-sm uppercase tracking-wide text-slate-600">Step-by-Step Assembly (Week 1)</h3>
+                            <ol class="space-y-2 text-sm list-decimal pl-5">
+                                <li><strong>Google Cloud:</strong> Create project, enable BigQuery API, add billing ($300 free credit)</li>
+                                <li><strong>n8n Cloud:</strong> Sign up Pro $24/mo, create Shopify → BigQuery workflow template</li>
+                                <li><strong>Airbyte Cloud:</strong> Connect Meta Ads, GA4, TikTok (first 100k rows free)</li>
+                                <li><strong>dbt Core (free):</strong> Install locally, build staging models for revenue, ad spend, blended ROAS</li>
+                                <li><strong>OpenAI + Anthropic:</strong> Fund $100 each, create API keys, test prompts in Playground</li>
+                                <li><strong>LangChain:</strong> Deploy simple FastAPI on Railway ($5/mo) with agent using GPT-4o for SQL generation</li>
+                                <li><strong>Delivery:</strong> Create Notion template, Slack workspace, Loom folder structure</li>
+                            </ol>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                        <table class="w-full text-[13px] border border-slate-200">
+                            <thead class="bg-slate-900 text-white">
+                                <tr>
+                                    <th class="p-2.5 text-left">Tool</th>
+                                    <th class="p-2.5 text-left">Purpose</th>
+                                    <th class="p-2.5 text-left">Cost USD</th>
+                                    <th class="p-2.5 text-left">Cost PHP</th>
+                                    <th class="p-2.5 text-left">Free Alt</th>
+                                    <th class="p-2.5 text-left">Setup</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y font-mono text-[12px]">
+                                <tr><td class="p-2.5 font-sans font-medium">n8n Cloud Pro</td><td class="p-2.5 font-sans">Orchestration</td><td class="p-2.5">$24</td><td class="p-2.5">₱1,344</td><td class="p-2.5 font-sans">Self-host</td><td class="p-2.5 font-sans">2 hrs</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-sans font-medium">Airbyte Cloud</td><td class="p-2.5 font-sans">ETL Connectors</td><td class="p-2.5">$0-100</td><td class="p-2.5">₱0-5,600</td><td class="p-2.5 font-sans">Open source</td><td class="p-2.5 font-sans">3 hrs</td></tr>
+                                <tr><td class="p-2.5 font-sans font-medium">BigQuery</td><td class="p-2.5 font-sans">Warehouse</td><td class="p-2.5">$20-50</td><td class="p-2.5">₱1,120-2,800</td><td class="p-2.5 font-sans">-</td><td class="p-2.5 font-sans">1 hr</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-sans font-medium">OpenAI API</td><td class="p-2.5 font-sans">GPT-4o analysis</td><td class="p-2.5">$50-150</td><td class="p-2.5">₱2,800-8,400</td><td class="p-2.5 font-sans">-</td><td class="p-2.5 font-sans">1 hr</td></tr>
+                                <tr><td class="p-2.5 font-sans font-medium">Anthropic Claude</td><td class="p-2.5 font-sans">Reasoning</td><td class="p-2.5">$40-100</td><td class="p-2.5">₱2,240-5,600</td><td class="p-2.5 font-sans">-</td><td class="p-2.5 font-sans">0.5 hr</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-sans font-medium">Railway.app</td><td class="p-2.5 font-sans">Host agents</td><td class="p-2.5">$5-20</td><td class="p-2.5">₱280-1,120</td><td class="p-2.5 font-sans">Render</td><td class="p-2.5 font-sans">2 hrs</td></tr>
+                                <tr><td class="p-2.5 font-sans font-medium">Looker Studio</td><td class="p-2.5 font-sans">Dashboards</td><td class="p-2.5">$0</td><td class="p-2.5">₱0</td><td class="p-2.5 font-sans">-</td><td class="p-2.5 font-sans">3 hrs</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-sans font-medium">Notion Pro + Slack + Loom</td><td class="p-2.5 font-sans">Delivery</td><td class="p-2.5">$33.75</td><td class="p-2.5">₱1,890</td><td class="p-2.5 font-sans">Free tiers</td><td class="p-2.5 font-sans">2 hrs</td></tr>
+                                <tr class="bg-slate-900 text-white font-semibold"><td class="p-2.5 font-sans" colspan="2">TOTAL MONTHLY STACK</td><td class="p-2.5">$213-473</td><td class="p-2.5">₱11,928-26,488</td><td class="p-2.5 font-sans" colspan="2">~15 hours setup</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </section>
+
+                    <!-- 8. Playbook -->
+                    <section id="playbook" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">08</span> Implementation Playbook - 90 Day Plan</h2>
+                        <div class="grid md:grid-cols-3 gap-6">
+                            <div class="border border-slate-200 rounded-lg p-5">
+                                <h3 class="font-bold text-[#0B2240] mb-3">Weeks 1-4: Foundation</h3>
+                                <ul class="text-[13px] space-y-2">
+                                    <li>• Register PH business (DTI) + Wise Business USD account</li>
+                                    <li>• Build full stack (above) with demo data from 2 test stores</li>
+                                    <li>• Create 3 Notion templates: Monday Memo, Audit, Onboarding</li>
+                                    <li>• Record 3 Loom demos (Shopify audit, ad waste finder, forecast)</li>
+                                    <li>• Build landing page (Framer) + Calendly</li>
+                                    <li>• <strong>Output:</strong> Working product, ready to sell</li>
+                                </ul>
+                            </div>
+                            <div class="border border-slate-200 rounded-lg p-5 bg-slate-50">
+                                <h3 class="font-bold text-[#0B2240] mb-3">Weeks 5-8: Acquisition</h3>
+                                <ul class="text-[13px] space-y-2">
+                                    <li>• Launch LinkedIn content (3x/week teardowns)</li>
+                                    <li>• DM 50 PH Shopify owners/day (target: 10 free audits)</li>
+                                    <li>• Partner outreach: 20 PH agencies, 10 US ecom accountants</li>
+                                    <li>• Deliver 10 free audits → aim 30% close rate</li>
+                                    <li>• Close first 2 clients (1 Starter PH, 1 Growth US)</li>
+                                    <li>• <strong>Output:</strong> $7,000 MRR, testimonials</li>
+                                </ul>
+                            </div>
+                            <div class="border border-slate-200 rounded-lg p-5">
+                                <h3 class="font-bold text-[#0B2240] mb-3">Weeks 9-12: Delivery & Scale</h3>
+                                <ul class="text-[13px] space-y-2">
+                                    <li>• Systematize Monday Memo (90% automated)</li>
+                                    <li>• Hire PH VA ₱25k/mo for data QA (20 hrs/week)</li>
+                                    <li>• Refine AI prompts based on client feedback</li>
+                                    <li>• Raise prices 20% for new clients</li>
+                                    <li>• Add 2 more clients via referrals</li>
+                                    <li>• <strong>Output:</strong> 4 clients, $17k MRR, 20 hrs/week workload</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- 9. Operations -->
+                    <section id="operations" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">09</span> Operations Workflow - The Monday Memo</h2>
+                        <div class="bg-slate-900 text-white rounded-lg p-6 font-mono text-[12px] leading-relaxed">
+                            <div>FRI 16:00 PHT → n8n triggers full sync (Shopify, Ads, GA4)</div>
+                            <div>FRI 18:00 → dbt runs models, updates BigQuery tables</div>
+                            <div>SAT 09:00 → LangChain agent runs 7 analysis prompts:</div>
+                            <div class="pl-4 text-slate-400">1. week_over_week_revenue_change 2. ad_waste_detection  3. inventory_risk</div>
+                            <div class="pl-4 text-slate-400">4. top_losing_skus  5. cohort_retention  6. forecast_next_14d  7. anomaly_check</div>
+                            <div>SAT 14:00 → Claude 3.5 drafts memo in Notion (human review queue)</div>
+                            <div>SUN 19:00 → You review 30 min, record 5-min Loom</div>
+                            <div class="text-emerald-400">MON 08:00 CLIENT TIME → Slack: Memo + Loom + 3 decisions</div>
+                        </div>
+                        <p class="text-sm mt-4">Each memo follows template: <strong>TL;DR (3 bullets) → What Changed → 3 Decisions → Metrics Table → Risks</strong>. Average production time per client after Month 3: 1.5 hours/week.</p>
+                    </section>
+
+                    <!-- 10. Pricing -->
+                    <section id="pricing" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">10</span> Pricing & Unit Economics</h2>
+                        <div class="overflow-x-auto">
+                        <table class="w-full text-sm border">
+                            <thead class="bg-slate-100"><tr><th class="p-2.5 text-left">Tier</th><th class="p-2.5 text-left">Revenue</th><th class="p-2.5 text-left">Direct Cost</th><th class="p-2.5 text-left">Labor (hrs)</th><th class="p-2.5 text-left">Gross Margin</th></tr></thead>
+                            <tbody class="divide-y mono text-[13px]">
+                                <tr><td class="p-2.5 font-sans font-medium">Starter</td><td class="p-2.5">$2,500</td><td class="p-2.5">$85</td><td class="p-2.5">6 hrs</td><td class="p-2.5 text-emerald-700 font-semibold">72.6%</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-sans font-medium">Growth</td><td class="p-2.5">$4,500</td><td class="p-2.5">$120</td><td class="p-2.5">9 hrs</td><td class="p-2.5 text-emerald-700 font-semibold">77.3%</td></tr>
+                                <tr><td class="p-2.5 font-sans font-medium">Scale</td><td class="p-2.5">$7,500</td><td class="p-2.5">$200</td><td class="p-2.5">12 hrs</td><td class="p-2.5 text-emerald-700 font-semibold">81.3%</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                        <p class="text-xs text-slate-600 mt-3">Assumes $100/hr effective labor rate. Direct costs = APIs + VA allocation. Break-even: 1 Growth client covers full stack + ₱50k salary. Solo capacity: 6 clients (~50 hrs/week) before hiring analyst.</p>
+                    </section>
+
+                    <!-- 11. Financials -->
+                    <section id="financials" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">11</span> Financial Projection 0-9 Months</h2>
+                        <div class="overflow-x-auto">
+                        <table class="w-full text-[12px] border border-slate-300">
+                            <thead class="bg-[#0B2240] text-white">
+                                <tr>
+                                    <th class="p-2 text-left">Month</th>
+                                    <th class="p-2">Starter</th>
+                                    <th class="p-2">Growth</th>
+                                    <th class="p-2">Scale</th>
+                                    <th class="p-2">Total Clients</th>
+                                    <th class="p-2 text-right">MRR USD</th>
+                                    <th class="p-2 text-right">MRR PHP</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y mono">
+                                <tr><td class="p-2 font-sans">1</td><td class="p-2 text-center">1</td><td class="p-2 text-center">0</td><td class="p-2 text-center">0</td><td class="p-2 text-center">1</td><td class="p-2 text-right">$2,500</td><td class="p-2 text-right">₱140,000</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2 font-sans">2</td><td class="p-2 text-center">1</td><td class="p-2 text-center">1</td><td class="p-2 text-center">0</td><td class="p-2 text-center">2</td><td class="p-2 text-right">$7,000</td><td class="p-2 text-right">₱392,000</td></tr>
+                                <tr><td class="p-2 font-sans">3</td><td class="p-2 text-center">2</td><td class="p-2 text-center">1</td><td class="p-2 text-center">0</td><td class="p-2 text-center">3</td><td class="p-2 text-right">$9,500</td><td class="p-2 text-right">₱532,000</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2 font-sans">4</td><td class="p-2 text-center">2</td><td class="p-2 text-center">1</td><td class="p-2 text-center">1</td><td class="p-2 text-center">4</td><td class="p-2 text-right">$17,000</td><td class="p-2 text-right">₱952,000</td></tr>
+                                <tr><td class="p-2 font-sans">5</td><td class="p-2 text-center">1</td><td class="p-2 text-center">2</td><td class="p-2 text-center">1</td><td class="p-2 text-center">4</td><td class="p-2 text-right">$19,000</td><td class="p-2 text-right">₱1,064,000</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2 font-sans">6</td><td class="p-2 text-center">1</td><td class="p-2 text-center">2</td><td class="p-2 text-center">1</td><td class="p-2 text-center">4</td><td class="p-2 text-right">$19,000</td><td class="p-2 text-right">₱1,064,000</td></tr>
+                                <tr><td class="p-2 font-sans">7</td><td class="p-2 text-center">2</td><td class="p-2 text-center">2</td><td class="p-2 text-center">1</td><td class="p-2 text-center">5</td><td class="p-2 text-right">$21,500</td><td class="p-2 text-right">₱1,204,000</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2 font-sans">8</td><td class="p-2 text-center">1</td><td class="p-2 text-center">3</td><td class="p-2 text-center">1</td><td class="p-2 text-center">5</td><td class="p-2 text-right">$23,500</td><td class="p-2 text-right">₱1,316,000</td></tr>
+                                <tr class="bg-emerald-50 font-bold"><td class="p-2 font-sans">9</td><td class="p-2 text-center">1</td><td class="p-2 text-center">2</td><td class="p-2 text-center">2</td><td class="p-2 text-center">5</td><td class="p-2 text-right">$26,500</td><td class="p-2 text-right">₱1,484,000</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                        <p class="text-xs mt-2 text-slate-600">Model assumes 5% monthly churn, upgrade 1 Starter → Growth at month 5, first Scale at month 4. Target exceeded in Month 9.</p>
+                    </section>
+
+                    <!-- 12. Marketing -->
+                    <section id="marketing" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">12</span> Marketing & Client Acquisition</h2>
+                        <div class="space-y-4 text-sm">
+                            <div><h3 class="font-semibold mb-1">1. Free AI Audit (Primary Lead Magnet)</h3><p>Offer: "I'll analyze your last 90 days of Shopify + ads data with AI and send you a 5-minute Loom with 3 money-leaks." Deliver in 24 hours using your stack. Conversion: 25-35% to paid.</p></div>
+                            <div><h3 class="font-semibold mb-1">2. LinkedIn Content System (PH + Global)</h3><p>Post 3x/week: Monday = teardown ("This PH skincare brand wasted ₱340k on ads"), Wednesday = framework, Friday = case study. Target hashtags #ShopifyPH #EcommercePH.</p></div>
+                            <div><h3 class="font-semibold mb-1">3. Partnerships</h3><p>PH Shopify dev agencies (refer 15% rev share), US ecom bookkeepers, Lazada/Shopee consultants. They have clients but don't do analytics.</p></div>
+                        </div>
+                        <div class="mt-4 p-4 bg-slate-50 border border-slate-200 rounded text-[12px] font-mono">
+                            Cold DM script: "Hey [Name], noticed [store] is on Shopify. Quick q - are you manually exporting CSVs to track ROAS? Built an AI that auto-detects ad waste for PH brands. Want a free 5-min audit? No pitch."
+                        </div>
+                    </section>
+
+                    <!-- 13. Risks -->
+                    <section id="risks" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">13</span> Risks & Mitigations for Philippines Operator</h2>
+                        <div class="overflow-x-auto">
+                        <table class="w-full text-[13px] border">
+                            <thead class="bg-slate-100"><tr><th class="p-2.5 text-left w-1/4">Risk</th><th class="p-2.5 text-left">Mitigation</th></tr></thead>
+                            <tbody class="divide-y">
+                                <tr><td class="p-2.5 font-medium align-top">Timezone (US clients)</td><td class="p-2.5">Work 9pm-1am PHT 3x/week for calls. Delivery is async via Slack/Loom. Market as "overnight analysis."</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-medium align-top">Payments (USD)</td><td class="p-2.5">Wise Business USD account + Stripe (via US LLC through Firstbase $399). For PH: Maya Business, GCash, BPI.</td></tr>
+                                <tr><td class="p-2.5 font-medium align-top">Internet reliability</td><td class="p-2.5">Dual ISP (PLDT + Converge/G OMNI) + 5G backup (Smart). UPS for brownouts. Non-negotiable.</td></tr>
+                                <tr class="bg-slate-50"><td class="p-2.5 font-medium align-top">Trust barrier (solo PH)</td><td class="p-2.5">Professional domain (.com), US phone via OpenPhone, client video testimonials, "Powered by BigQuery + OpenAI" badges.</td></tr>
+                                <tr><td class="p-2.5 font-medium align-top">AI hallucinations</td><td class="p-2.5">Human-in-loop mandatory. All insights cite SQL source. Build "confidence score" in prompts. Never automate final client comms.</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </section>
+
+                    <!-- 14. Checklist -->
+                    <section id="checklist" class="scroll-mt-8">
+                        <h2 class="text-2xl font-bold mb-4 flex items-center gap-3"><span class="text-slate-400 font-mono text-lg">14</span> Decision Checklist - Execute This Week</h2>
+                        <div class="grid md:grid-cols-2 gap-3 text-sm">
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Open Wise Business USD account (1 day)</span></label>
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Create Google Cloud + enable BigQuery</span></label>
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Sign up n8n Cloud Pro ($24)</span></label>
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Fund OpenAI ($100) + Anthropic ($50)</span></label>
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Build demo Shopify pipeline</span></label>
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Create Notion Monday Memo template</span></label>
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Record 1 demo Loom audit</span></label>
+                            <label class="flex gap-3 p-3 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" class="mt-0.5"> <span>Message 20 PH Shopify store owners today</span></label>
+                        </div>
+                        <div class="mt-6 p-5 bg-[#0B2240] text-white rounded-lg">
+                            <p class="font-semibold">Next Action:</p>
+                            <p class="text-sm text-slate-200 mt-1">If you complete the 8 items above in 7 days, you will have a sellable service. The market is waiting for someone who delivers decisions, not dashboards. Start with one free audit tomorrow.</p>
+                        </div>
+                    </section>
+
+                    <!-- Citations -->
+                    <footer class="pt-10 mt-12 border-t border-slate-200">
+                        <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Sources & Notes</h4>
+                        <ol class="text-[11px] text-slate-500 space-y-1 list-decimal pl-4">
+                            <li>StoreLeads - Shopify Stores in Philippines, March 2026 report: 9,954 live stores, 12% YoY, 6,102 in NCR.</li>
+                            <li>DTI Philippines MSME Statistics 2025: 1,080,810 enterprises, 99.5% MSMEs.</li>
+                            <li>Google Temasek e-Conomy SEA 2025: Philippines e-commerce GMV $21.3B (~₱1.19T).</li>
+                            <li>Exchange rate used: $1 = ₱56.00 (BSP average March 2026, rounded for planning).</li>
+                            <li>Tool pricing verified April 2026: n8n Cloud Pro $24, Airbyte $0-$2/credit, BigQuery on-demand $6.25/TB.</li>
+                        </ol>
+                        <p class="text-[11px] text-slate-400 mt-4">© 2026 Solo AI Analytics Playbook. For educational and execution purposes. Not financial advice. Consult DTI/BIR for PH business registration and tax obligations.</p>
+                    </footer>
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
